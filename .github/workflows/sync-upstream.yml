@@ -8,6 +8,11 @@ on:
     # 每天 03:00 Asia/Shanghai == 前一天 19:00 UTC
     - cron: "0 19 * * *"
   workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: "即使上游无更新，也触发一次部署（用于验证触发链路）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write # 需要 push 合并结果
@@ -72,7 +77,7 @@ jobs:
         run: git push origin HEAD:main
 
       - name: Trigger deploy workflow
-        if: steps.merge.outputs.changed == 'true'
+        if: steps.merge.outputs.changed == 'true' || inputs.force_deploy
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
