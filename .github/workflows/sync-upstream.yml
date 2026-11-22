@@ -77,5 +77,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # GITHUB_TOKEN 推送的提交不会触发 push 事件，必须显式 dispatch
-          gh workflow run "Deploy to Cloudflare Workers" --ref main
+          # 用文件名 deploy.yml 定位，不依赖工作流显示名称（按名称查在 fork 里不可靠）
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/actions/workflows/deploy.yml/dispatches" \
+            -f ref=main
           echo "已触发部署工作流"
