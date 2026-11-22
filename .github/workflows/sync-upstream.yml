@@ -1,0 +1,81 @@
+name: Sync upstream
+
+# 每天把 shuaiplus/NodeWarden 的更新合并进本仓库 main
+# 合并而非覆盖：本仓库的 deploy.yml 与"已删除的安全工作流"会保留
+
+on:
+  schedule:
+    # 每天 03:00 Asia/Shanghai == 前一天 19:00 UTC
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write # 需要 push 合并结果
+  actions: write # 需要 dispatch 部署工作流
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0 # 合并需要完整历史找共同祖先
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          set -uo pipefail
+          git remote add upstream https://github.com/shuaiplus/NodeWarden.git
+          git fetch --no-tags upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "已是最新，无需更新"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "上游新增提交："
+          git --no-pager log --oneline HEAD..upstream/main | head -50 || true
+
+          if git merge --no-edit upstream/main; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 冲突处理：优先保留"主动删除安全工作流"的既定策略
+          echo "::warning::合并出现冲突，尝试按既定策略自动解决"
+          git rm -f .github/workflows/codeql.yml 2>/dev/null || true
+          git rm -f .github/workflows/security-extra.yml 2>/dev/null || true
+
+          if git commit --no-edit; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::仍有未解决的冲突，已放弃本次同步（本地未受影响）"
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: Push to fork
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:main
+
+      - name: Trigger deploy workflow
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # GITHUB_TOKEN 推送的提交不会触发 push 事件，必须显式 dispatch
+          gh workflow run "Deploy to Cloudflare Workers" --ref main
+          echo "已触发部署工作流"
